@@ -1,0 +1,12 @@
+{
+    "Usikraft Discovery (Padr\u00e3o)": {
+        "header": "M10\nG04 P15000\nM71\nG04 P500\nT{tool}M6\nG43H{tool}\nG0 Z{z_safe}H{tool}\nG0 X0 Y0\nS{rpm}M3\n",
+        "tool_change": "M5\nT{tool}M6\nG43H{tool}\nS{rpm}M03\n",
+        "footer": "\nM05\nM11\nM72\nG0 Z{z_safe}\nG0 X0 Y0\nM30\n"
+    },
+    "Mach3 Gen\u00e9rico (Router)": {
+        "header": "(--- TIRANOGIO V11 ---\n(Material: {material} | Esp: {espessura}mm | Chapa: {chapa})\nG90 G21\nG17 G40 G49 G80\nG0 Z{z_safe}\n",
+        "tool_change": "M6 {tool}\nM3 S{rpm}\nG4 P2\n",
+        "footer": "\n(--- FINAL DA USINAGEM ---)\nG0 Z{z_safe}\nG0 X0 Y0\nM5\nM30\n"
+    }
+}

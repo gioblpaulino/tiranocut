@@ -1,0 +1,12 @@
+{
+    "fresa_corte_6mm": {
+        "nome": "Fresa de Corte 6mm (UP/DOWN)",
+        "metros_rodados": 0.0,
+        "vida_util_max": 3000.0
+    },
+    "broca_5mm": {
+        "nome": "Broca de Fura\u00e7\u00e3o Frontal 5mm",
+        "metros_rodados": 0.0,
+        "vida_util_max": 1500.0
+    }
+}
