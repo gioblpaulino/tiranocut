@@ -397,80 +397,69 @@ class TiranoGioApp:
             self.gap_fresa = 10.0
             self.gap_nesting = 10.0
 
-        tem_layout = any(self.chapas_globais.values()) or any(
-            self.estoque_global_pecas.values()
-        )
+        tem_layout = any(self.chapas_globais.values()) or any(self.estoque_global_pecas.values())
         if tem_layout:
+            from tkinter import messagebox
             resp = messagebox.askyesnocancel(
                 "⚠️ Re-Nesting Detectado",
                 "Você já possui peças na chapa ou no estoque.\n\n"
-                "SIM: Juntar tudo e re-otimizar o layout.\n"
+                "SIM: Manter tudo e recalcular.\n"
                 "NÃO: Apagar tudo e começar do zero.\n"
-                "CANCELAR: Abortar operação.",
+                "CANCELAR: Abortar operação."
             )
-            if resp is None:
-                return
+            if resp is None: return
             if resp == False:
                 self.chapas_globais.clear()
                 self.estoque_global_pecas.clear()
 
-        # --- CONSOLIDAÇÃO DO LOTE ATIVO EM MEMÓRIA ---
+        # CONSOLIDAÇÃO INTELIGENTE (Sem apagar peças importadas)
         novo_lote = {}
-        for mat, chapas in self.chapas_globais.items():
-            if mat not in novo_lote:
-                novo_lote[mat] = []
-            for chapa in chapas:
-                for p in chapa:
-                    if p.get("tipo") != "metadados":
-                        novo_lote[mat].append(p)
+        
+        # 1. Copia as peças que acabaram de ser importadas
+        if hasattr(self, 'lotes_por_material'):
+            for mat, pecas in self.lotes_por_material.items():
+                novo_lote[mat] = list(pecas)
 
-        for mat, pecas in self.estoque_global_pecas.items():
-            if mat not in novo_lote:
-                novo_lote[mat] = []
-            novo_lote[mat].extend(pecas)
+        # 2. Se houver peças do estoque global, adiciona junto
+        if hasattr(self, 'estoque_global_pecas'):
+            for mat, pecas in self.estoque_global_pecas.items():
+                if mat not in novo_lote:
+                    novo_lote[mat] = []
+                novo_lote[mat].extend(pecas)
 
         self.lotes_por_material = novo_lote
-
         self.chapas_globais.clear()
-        self.estoque_global_pecas.clear()
 
-        # 🚀 ALOCAÇÃO PRIORITÁRIA DE RETALHOS APÓS CONSOLIDAÇÃO DO LOTE
-        if (
-            hasattr(self.ui, "var_usar_retalhos_banco")
-            and self.ui.var_usar_retalhos_banco.get()
-        ):
-            for material in list(self.lotes_por_material.keys()):
-                retalhos_banco = self.db.listar_retalhos_por_material(material)
+        # ALOCAÇÃO DE RETALHOS (Apenas se o DB existir e estiver ativo)
+        if hasattr(self.ui, "var_usar_retalhos_banco") and self.ui.var_usar_retalhos_banco.get():
+            if hasattr(self, 'db'):
+                for material in list(self.lotes_por_material.keys()):
+                    try:
+                        retalhos_banco = self.db.listar_retalhos_por_material(material)
+                        if retalhos_banco:
+                            if hasattr(self, 'logger'):
+                                self.logger.info(f"Encontrados {len(retalhos_banco)} retalhos de {material}. Injetando...")
+                            
+                            if material not in self.chapas_globais:
+                                self.chapas_globais[material] = []
 
-                if retalhos_banco:
-                    self.logger.info(
-                        f"Encontrados {len(retalhos_banco)} retalhos de {material} no cofre. Injetando no plano..."
-                    )
-
-                    if material not in self.chapas_globais:
-                        self.chapas_globais[material] = []
-
-                    # Aloca os retalhos encontrados como as primeiras chapas (Bins) do Nesting
-                    for r_id, r_w, r_h, r_esp, r_veio in retalhos_banco:
-                        self.chapas_globais[material].insert(
-                            0,
-                            [
-                                {
+                            for r_id, r_w, r_h, r_esp, r_veio in retalhos_banco:
+                                self.chapas_globais[material].insert(0, [{
                                     "tipo": "metadados",
-                                    "limite_x_corte": 0,
-                                    "limite_y_corte": 0,
-                                    "espessura_chapa": r_esp,
-                                    "possui_veio": bool(r_veio),
+                                    "limite_x_corte": 0, "limite_y_corte": 0,
+                                    "espessura_chapa": r_esp, "possui_veio": bool(r_veio),
                                     "id_retalho_banco": r_id,
-                                    "largura_original_retalho": r_w,
-                                    "altura_original_retalho": r_h,
-                                }
-                            ],
-                        )
+                                    "largura_original_retalho": r_w, "altura_original_retalho": r_h
+                                }])
+                    except Exception as e:
+                        if hasattr(self, 'logger'): self.logger.aviso(f"Erro ao buscar retalhos: {e}")
 
-        self.logger.info(f"Iniciando Nesting. Gap: {self.gap_fresa}mm")
+        if hasattr(self, 'logger'):
+            self.logger.info(f"Iniciando Nesting. Gap: {self.gap_fresa}mm")
+        
+        # Inicia o motor
         self.nesting.processar()
-
+        
     def mudar_material_preview(self, event=None):
         # Atualiza a chapa editável com base no material selecionado no combobox e redesenha a visualização
         mat = self.ui.combo_materiais.get()
@@ -1286,6 +1275,20 @@ class TiranoGioApp:
             command=salvar_parametros_filtro,
         ).pack(fill="x", pady=25)
 
+    def atualizar_lista_pecas_ui(self):
+        """Popula a lista da interface gráfica com base no material selecionado no combobox"""
+        if hasattr(self.ui, 'lista_pecas') and self.ui.lista_pecas:
+            self.ui.lista_pecas.delete(0, 'end')
+            mat_sel = self.ui.combo_materiais.get() if hasattr(self.ui, 'combo_materiais') else None
+            
+            if mat_sel and mat_sel in self.lotes_por_material:
+                for p in self.lotes_por_material[mat_sel]:
+                    # Escudo de tipagem: busca as dimensões de forma segura, independentemente da origem
+                    nome = getattr(p, 'nome', getattr(p, 'descricao', 'Peça'))
+                    w = getattr(p, 'largura', getattr(p, 'dim_x_csv', 0))
+                    h = getattr(p, 'altura', getattr(p, 'dim_y_csv', 0))
+                    self.ui.lista_pecas.insert('end', f"{nome} ({int(w)}x{int(h)}mm)")
+
     def puxar_modulo_servidor(self):
         """Requisita o módulo ativo no Flask, abastece a fábrica e prepara o canvas"""
         import urllib.request
@@ -1320,13 +1323,16 @@ class TiranoGioApp:
                         self.mudar_material_preview()
 
                     total_pecas = sum(len(v) for v in self.lotes_por_material.values())
-                    messagebox.showinfo(
-                        "Integração Concluída",
-                        f"Módulo do TiranoGio 3D Carregado!\n\n"
-                        f"Total de Peças: {total_pecas}\n"
-                        f"Materiais: {', '.join(materiais)}\n\n"
-                        f"Clique em 'PROCESSAR NESTING' para otimizar as chapas."
-                    )
+                    
+                    # Feedback visual discreto, sem interromper o fluxo com caixas de diálogo
+                    if hasattr(self.ui, 'lbl_status'):
+                        self.ui.lbl_status.configure(text=f"Módulo 3D Integrado! ({total_pecas} peças alocadas)", text_color="#00E676")
+
+                    # GATILHO AUTOMÁTICO: Dispara o Motor de Nesting imediatamente
+                    if hasattr(self, 'processar_nesting'):
+                        self.processar_nesting()
+                    elif hasattr(self, 'motor') and hasattr(self.motor, 'processar'):
+                        self.motor.processar()
             else:
                 messagebox.showerror("Erro de Servidor", f"O servidor respondeu com status: {req.status}")
         except Exception as e:
@@ -1334,15 +1340,6 @@ class TiranoGioApp:
                 "Falha de Conexão",
                 f"Certifique-se de que o servidor Flask (app.py) está ativo na porta 5000.\n\nDetalhes: {e}"
             )
-
-    def atualizar_lista_pecas_ui(self):
-        """Popula a lista da interface gráfica com base no material selecionado no combobox"""
-        if hasattr(self.ui, 'lista_pecas') and self.ui.lista_pecas:
-            self.ui.lista_pecas.delete(0, 'end')
-            mat_sel = self.ui.combo_materiais.get() if hasattr(self.ui, 'combo_materiais') else None
-            if mat_sel and mat_sel in self.lotes_por_material:
-                for p in self.lotes_por_material[mat_sel]:
-                    self.ui.lista_pecas.insert('end', f"{p.nome} ({int(p.largura)}x{int(p.altura)}mm)")
                     
 if __name__ == "__main__":
     try:

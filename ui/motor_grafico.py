@@ -374,8 +374,17 @@ class MotorGrafico:
 
             for rasgo in dados.get("rasgos", []):
                 try:
-                    rx, ry, rw, rl = rasgo.get('X', 0), rasgo.get('Y', 0), rasgo.get('Width', 6), rasgo.get('Length', w_real)
-                    if rasgo.get('Dir') == 'V':
+                    # Tenta ler no padrão legado (CSV/Inglês) ou no padrão JSON (Português/Minúsculo)
+                    rx = float(rasgo.get('X', rasgo.get('x', 0)))
+                    ry = float(rasgo.get('Y', rasgo.get('y', 0)))
+                    rw = float(rasgo.get('Width', rasgo.get('largura', rasgo.get('espessura', 6))))
+                    rl = float(rasgo.get('Length', rasgo.get('comprimento', w_real)))
+                    
+                    # Captura 'V'/'H' ou 'vertical'/'horizontal' e pega só a primeira letra
+                    dir_raw = str(rasgo.get('Dir', rasgo.get('direcao', 'V'))).upper()
+                    r_dir = dir_raw[0] if dir_raw else 'V'
+
+                    if r_dir == 'V':
                         tx1_r, ty1_r = self.transformar_ponto_tela(rx + (rw/2), ry, w_real, girou, x_mdf, y_mdf)
                         tx2_r, ty2_r = self.transformar_ponto_tela(rx + (rw/2), ry + rl, w_real, girou, x_mdf, y_mdf)
                     else:
@@ -385,15 +394,22 @@ class MotorGrafico:
                     cx1, cy1 = ox + (min(tx1_r, tx2_r) * self.escala), oy + altura_chapa_px - (max(ty1_r, ty2_r) * self.escala)
                     cx2, cy2 = ox + (max(tx1_r, tx2_r) * self.escala), oy + altura_chapa_px - (min(ty1_r, ty2_r) * self.escala)
                     self.canvas.create_rectangle(cx1, cy1, cx2, cy2, fill="#8B4513", outline="", tags=(uid, "peca_movivel"))
-                except Exception: pass
+                except Exception as e:
+                    if hasattr(self.app, 'logger'): self.app.logger.aviso(f"Falha visual no rasgo: {e}")
 
             for furo in dados.get("furos", []):
                 try:
-                    tx_f, ty_f = self.transformar_ponto_tela(furo['X'], furo['Y'], w_real, girou, x_mdf, y_mdf)
-                    raio = max((furo.get('Diameter', 5)/2)*self.escala, 0.5)
-                    fx, fy = ox + (tx_f * self.escala), oy + altura_chapa_px - (ty_f * self.escala)
-                    self.canvas.create_oval(fx - raio, fy - raio, fx + raio, fy + raio, fill="#333", tags=(uid, "peca_movivel"))
-                except Exception: pass
+                    fx = float(furo.get('X', furo.get('x', 0)))
+                    fy = float(furo.get('Y', furo.get('y', 0)))
+                    diam = float(furo.get('Diameter', furo.get('diametro', 5)))
+
+                    tx_f, ty_f = self.transformar_ponto_tela(fx, fy, w_real, girou, x_mdf, y_mdf)
+                    raio = max((diam / 2) * self.escala, 0.5)
+                    fx_px, fy_px = ox + (tx_f * self.escala), oy + altura_chapa_px - (ty_f * self.escala)
+                    
+                    self.canvas.create_oval(fx_px - raio, fy_px - raio, fx_px + raio, fy_px + raio, fill="#333", tags=(uid, "peca_movivel"))
+                except Exception as e:
+                    if hasattr(self.app, 'logger'): self.app.logger.aviso(f"Falha visual no furo: {e}")
 
             if abs(px2 - px1) > 60 * self.escala and abs(py2 - py1) > 40 * self.escala:
                 texto_exibicao = f"⚠️ {tipo_alerta} ({esp_alvo}mm)\n{id_etiqueta}\n{nome_limpo[:15]}\n{w_real:.0f}x{h_real:.0f}" if is_critica else f"{id_etiqueta}\n{nome_limpo[:15]}\n{w_real:.0f}x{h_real:.0f}"

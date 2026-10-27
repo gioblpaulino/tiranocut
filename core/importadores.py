@@ -643,19 +643,21 @@ class GerenciadorImportacao:
 
     def carregar_modulo_tiranogio_json(self, dados_modulo):
         """
-        Converte o payload nativo do TiranoGio 3D para o modelo oficial PecaPlanejado
-        e inicializa o estoque automático de chapas para o MotorNesting.
+        Converte o payload nativo do TiranoGio 3D para o modelo oficial PecaPlanejado,
+        respeitando estritamente a mesma tipagem e estrutura do importador CSV e DXF.
         """
+        import json
         from core.modelos import PecaPlanejado
+
+        if isinstance(dados_modulo, str):
+            try: dados_modulo = json.loads(dados_modulo)
+            except: return False
 
         pecas_raw = dados_modulo.get("lista_de_pecas", [])
         if not pecas_raw and isinstance(dados_modulo, dict):
             pecas_raw = dados_modulo.get("pecas") or dados_modulo.get("parts") or []
 
-        if not pecas_raw:
-            if hasattr(self.app, 'logger'):
-                self.app.logger.erro("Nenhuma peça encontrada no payload do TiranoGio!")
-            return False
+        if not pecas_raw: return False
 
         self.app.nome_cliente = str(dados_modulo.get("nome_projeto", "BALCAO_3D")).upper()
         self.app.nome_ambiente = str(dados_modulo.get("familia", "MODULO_INFERIOR")).upper()
@@ -664,84 +666,136 @@ class GerenciadorImportacao:
         mat_caixaria = str(parametros.get("material_caixaria", "MDF_BRANCO_15MM")).upper()
         mat_frentes = str(parametros.get("material_frentes", "MDF_FREIJO_15MM")).upper()
 
-        # Limpa os lotes do projeto anterior
         self.app.lotes_por_material.clear()
 
         for p_data in pecas_raw:
-            if not isinstance(p_data, dict):
-                continue
+            if not isinstance(p_data, dict): continue
 
             categoria = str(p_data.get("categoria_industrial", "")).lower()
             id_peca = str(p_data.get("id_peca", "PEC"))
             nome_peca = str(p_data.get("nome_comercial", "Peça"))
 
-            # Classificação do material
-            if any(term in categoria for term in ["frente", "porta", "gaveta"]):
-                mat_peca = mat_frentes
+            mat_base = mat_frentes if any(term in categoria for term in ["frente", "porta", "gaveta"]) else mat_caixaria
+
+            dim = p_data.get("dimensoes", {})
+            dx, dy, dz = float(dim.get("x", 0)), float(dim.get("y", 0)), float(dim.get("z", 0))
+            
+            # =================================================================
+            # 1. FIX DA ROTAÇÃO: PRESERVAR O EIXO X e Y ORIGINAIS DA PEÇA
+            # =================================================================
+            # Preserva a orientação original do SketchUp para que as coordenadas
+            # dos furos batam exatamente com o mapa da peça.
+            if dx > 0 and dy > 0 and dz > 0:
+                esp = min(dx, dy, dz)
+                if esp == dz: dim_x, dim_y = dx, dy
+                elif esp == dx: dim_x, dim_y = dy, dz
+                else: dim_x, dim_y = dx, dz
             else:
-                mat_peca = mat_caixaria
+                dims_ord = sorted([dx, dy, dz])
+                esp = dims_ord[0] if dims_ord[0] > 0 else 15.0
+                dim_x = dims_ord[1] 
+                dim_y = dims_ord[2] 
+
+            if dim_x <= 0 or dim_y <= 0: continue
+            mat_peca = f"{mat_base} ({esp}mm)"
 
             if mat_peca not in self.app.lotes_por_material:
                 self.app.lotes_por_material[mat_peca] = []
 
-            # Decomposição de dimensões (a menor é a espessura)
-            dim = p_data.get("dimensoes", {})
-            dx, dy, dz = float(dim.get("x", 0)), float(dim.get("y", 0)), float(dim.get("z", 0))
-            dims_ord = sorted([dx, dy, dz])
-
-            esp = dims_ord[0] if dims_ord[0] > 0 else 15.0
-            larg_corte = dims_ord[1]
-            comp_corte = dims_ord[2]
-
-            if comp_corte == 0 or larg_corte == 0:
-                continue
-
-            # Instancia o modelo nativo PecaPlanejado
             peca_obj = PecaPlanejado(
                 id_peca=id_peca,
                 descricao=f"[{self.app.nome_ambiente}] {nome_peca}",
-                material=mat_peca,
-                espessura=str(esp),
-                quantidade="1",
-                tem_veio=False
+                material=mat_peca, espessura=esp, quantidade=1, tem_veio=False
             )
 
-            # Atribuição correta das dimensões base no modelo
-            peca_obj.dim_x_csv = comp_corte
-            peca_obj.dim_y_csv = larg_corte
+            # Injeta as dimensões que casam perfeitamente com os furos
+            peca_obj.dim_x_csv = dim_x
+            peca_obj.dim_y_csv = dim_y
+            
+            # =================================================================
+            # 2. TRADUTOR DE USINAGENS (A ALFÂNDEGA BILINGUE)
+            # =================================================================
+            usinagens = p_data.get("usinagens", {})
+            
+            furos_padrao = []
+            for f in usinagens.get("furos", []):
+                furos_padrao.append({
+                    "X": float(f.get("X", f.get("x", 0))),
+                    "Y": float(f.get("Y", f.get("y", 0))),
+                    "Diameter": float(f.get("Diameter", f.get("diametro", 5))),
+                    "Depth": "passante"
+                })
+                
+            rasgos_padrao = []
+            for r in usinagens.get("rasgos", []):
+                d_raw = str(r.get("Dir", r.get("direcao", "V"))).upper()
+                r_dir = d_raw[0] if d_raw else "V"
 
-            # Dicionário rid exigido pelo MotorNesting, Motor Gráfico e Gerador de G-Code
-            peca_obj.rid = {
-                "uid": id_peca,
-                "nome": nome_peca,
-                "w_real": comp_corte,
-                "h_real": larg_corte,
-                "espessura": esp,
-                "furos": p_data.get("usinagens", {}).get("furos", []),
-                "rasgos": p_data.get("usinagens", {}).get("rasgos", []),
-                "pontos_perimetro": [
-                    {"x": 0.0, "y": 0.0, "tem_fita": False},
-                    {"x": comp_corte, "y": 0.0, "tem_fita": False},
-                    {"x": comp_corte, "y": larg_corte, "tem_fita": False},
-                    {"x": 0.0, "y": larg_corte, "tem_fita": False}
-                ]
+                # 1. Busca as chaves de tamanho
+                rw = float(r.get("Width", r.get("largura", r.get("espessura", 6))))
+                rl = float(r.get("Length", r.get("comprimento", dim_x if r_dir == 'H' else dim_y)))
+                
+                # 2. Caça-Palavras: Tenta achar a cota exata (X/Y) ou jargões de marcenaria
+                rx = float(r.get("X", r.get("x", 0)))
+                ry = float(r.get("Y", r.get("y", 0)))
+                afastamento = float(r.get("afastamento", r.get("offset", r.get("recuo", r.get("distancia", 0)))))
+
+                # Se o JSON mandou apenas o afastamento, nós convertemos para a coordenada correta
+                if rx == 0 and ry == 0 and afastamento > 0:
+                    if r_dir == 'V':
+                        rx = afastamento
+                    else:
+                        ry = afastamento
+
+                # 3. FIX DO LADO CONTRÁRIO (Espelhamento de Origem)
+                # Subtrai o recuo e a espessura da dimensão total da peça para jogar o rasgo pro lado oposto
+                if r_dir == 'V' and rx > 0:
+                    rx = dim_x - rx - rw
+                elif r_dir == 'H' and ry > 0:
+                    ry = dim_y - ry - rw
+
+                rasgos_padrao.append({
+                    "X": rx,
+                    "Y": ry,
+                    "Width": rw,
+                    "Length": rl,
+                    "Dir": r_dir
+                })
+                
+            peca_obj.furos = furos_padrao
+            peca_obj.rasgos = rasgos_padrao
+            
+            # Ajusta o perímetro para respeitar as dimensões preservadas
+            perimetro = [
+                {"x": 0.0, "y": 0.0, "tem_fita": False},
+                {"x": dim_x, "y": 0.0, "tem_fita": False},
+                {"x": dim_x, "y": dim_y, "tem_fita": False},
+                {"x": 0.0, "y": dim_y, "tem_fita": False}
+            ]
+            peca_obj.pontos_perimetro = perimetro
+            peca_obj.vertices_x = [p['x'] for p in perimetro]
+            peca_obj.vertices_y = [p['y'] for p in perimetro]
+
+            peca_obj.dados_extras = {
+                "furos_brutos_json": peca_obj.furos,
+                "is_critica": False, "tipo_engrosso": "NORMAL",
+                "lados_engrosso": "", "esp_alvo_engrosso": esp
             }
+            peca_obj.is_critica = False
+            peca_obj.tipo_engrosso = "NORMAL"
 
             self.app.lotes_por_material[mat_peca].append(peca_obj)
 
-        # Abastece o estoque global de chapas se estiver vazio
+        for lista_pecas in self.app.lotes_por_material.values():
+            if hasattr(self, 'aplicar_genetica_matriarcal'):
+                self.aplicar_genetica_matriarcal(lista_pecas)
+
         for mat in self.app.lotes_por_material.keys():
             if mat not in self.app.chapas_globais or not self.app.chapas_globais[mat]:
-                self.app.chapas_globais[mat] = [
-                    [{
-                        "tipo": "metadados",
-                        "limite_x_corte": 0,
-                        "limite_y_corte": 0,
-                        "espessura_chapa": 15.0,
-                        "possui_veio": False
-                    }]
-                ]
+                esp_chapa = float(mat.split('(')[-1].replace('mm)', '')) if '(' in mat else 15.0
+                self.app.chapas_globais[mat] = [[{
+                    "tipo": "metadados", "limite_x_corte": 0, "limite_y_corte": 0,
+                    "espessura_chapa": esp_chapa, "possui_veio": False
+                }]]
 
-        if hasattr(self.app, 'logger'):
-            self.app.logger.info(f"Módulo 3D importado com sucesso: {len(pecas_raw)} peças processadas.")
         return len(self.app.lotes_por_material) > 0

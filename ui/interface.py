@@ -29,7 +29,7 @@ class InterfacePrincipal:
 
         # 1. O PALCO MESTRE (Onde as telas vão se alternar)
         self.root.configure(fg_color="#121212")
-        self.container_principal = ctk.CTkFrame(self.root, fg_color="#121212", corner_radius=0)
+        self.container_principal = ctk.CTkFrame(self.root, fg_color="#000000", corner_radius=0)
         self.container_principal.pack(fill="both", expand=True)
 
         # Inicia o software mostrando a Home Page
@@ -50,8 +50,8 @@ class InterfacePrincipal:
         # Injeção da Logo
         try:
             img = Image.open("logo.png")
-            logo = ctk.CTkImage(light_image=img, dark_image=img, size=(280, 280))
-            ctk.CTkLabel(frame_home, text="", image=logo).pack(pady=(0, 20))
+            logo = ctk.CTkImage(light_image=img, dark_image=img, size=(430, 430))
+            ctk.CTkLabel(frame_home, text="", image=logo).pack(pady=(0, 0))
         except Exception:
             ctk.CTkLabel(frame_home, text="[ LOGO NÃO ENCONTRADA ]", text_color="red").pack(pady=(0, 20))
 
@@ -73,10 +73,10 @@ class InterfacePrincipal:
         # Coluna 1: Criar do Zero
         f_col1 = ctk.CTkFrame(f_botoes, fg_color="transparent")
         f_col1.pack(side="left", padx=10)
-        ctk.CTkLabel(f_col1, text="CRIAR DO ZERO", font=ctk.CTkFont(weight="bold", size=12), text_color="#5C5C5C").pack(pady=(0, 10))
+        ctk.CTkLabel(f_col1, text="COMEÇAR NOVO PROJETO", font=ctk.CTkFont(weight="bold", size=12), text_color="#5C5C5C").pack(pady=(0, 10))
         
         ctk.CTkButton(
-            f_col1, text="➕ Novo Projeto Vazio", font=ctk.CTkFont(weight="bold"), height=45, width=220,
+            f_col1, text="➕ Novo Projeto", font=ctk.CTkFont(weight="bold"), height=45, width=220,
             fg_color="#388E3C", hover_color="#2E7D32", command=self.app.iniciar_novo_projeto
         ).pack(pady=5)
 
